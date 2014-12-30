@@ -19,7 +19,13 @@ package com.mycompany.myproject;
 
 
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.MultiMap;
+import org.vertx.java.core.buffer.Buffer;
 import org.vertx.java.core.eventbus.Message;
+import org.vertx.java.core.http.HttpServerRequest;
+import org.vertx.java.core.http.RouteMatcher;
+import org.vertx.java.core.json.JsonArray;
+import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.logging.Logger;
 import org.vertx.java.platform.Verticle;
 
@@ -32,18 +38,133 @@ public class PingVerticle extends Verticle {
 
   public void start() {
 
-    final Logger logger = container.logger();
+    JsonObject appConfig = container.config();
 
-    vertx.eventBus().registerHandler("ping-address", new Handler<Message<String>>() {
+    System.out.println("Running the ping Vertice");
+
+    container.deployModule("io.vertx~mod-mongo-persistor~2.0.0-beta2", appConfig.getObject("mongo-persistor"));
+
+    vertx.createHttpServer().requestHandler(new Handler<HttpServerRequest>() {
       @Override
-      public void handle(Message<String> message) {
-        message.reply("pong!");
-        logger.info("Sent back pong");
+      public void handle(final HttpServerRequest httpServerRequest) {
+
+        RouteMatcher routeMatcher = new RouteMatcher();
+        routeMatcher.get("/zips", new Handler<HttpServerRequest>() {
+          @Override
+          public void handle(HttpServerRequest request) {
+            JsonObject json = new JsonObject();
+            MultiMap params = request.params();
+            if (params.size() > 0 && params.contains("state") || params.contains("city")) {
+              // create the matcher configuration
+              JsonObject matcher = new JsonObject();
+              if (params.contains("state")) matcher.putString("state", params.get("state"));
+              if (params.contains("city")) matcher.putString("city", params.get("city"));
+
+              // create the message for the mongo-persistor verticle
+              json = new JsonObject().putString("collection", "zips")
+                      .putString("action", "find")
+                      .putObject("matcher", matcher);
+
+            } else {
+              // create the query
+              json = new JsonObject().putString("collection", "zips")
+                      .putString("action", "find")
+                      .putObject("matcher", new JsonObject());
+            }
+
+            JsonObject data = new JsonObject();
+            data.putArray("results", new JsonArray());
+            // and call the event we want to use
+            vertx.eventBus().send("mongodb-persistor", json, new ReplyHandler(request, data));
+          }
+        });
+
+        routeMatcher.post("/zips/:id", new Handler<HttpServerRequest>() {
+
+          public void handle(final HttpServerRequest req) {
+            // process the body
+            req.bodyHandler(new Handler<Buffer>() {
+
+              @Override
+              public void handle(Buffer event) {
+                // normally we'd validate the input, for now just assume it is correct.
+                final String body = event.getString(0,event.length());
+
+                // create the query
+                JsonObject newObject = new JsonObject(body);
+                JsonObject matcher = new JsonObject().putString("_id", req.params().get("id"));
+                JsonObject json = new JsonObject().putString("collection", "zips")
+                        .putString("action", "update")
+                        .putObject("criteria", matcher)
+                        .putBoolean("upsert", false)
+                        .putBoolean("multi",false)
+                        .putObject("objNew",newObject);
+
+                // and call the event we want to use
+                vertx.eventBus().send("mongodb-persistor", json, new Handler<Message<JsonObject>>() {
+                  @Override
+                  public void handle(Message<JsonObject> event) {
+                    // we could handle the errors here, but for now
+                    // assume everything went ok, and return the original
+                    // and updated json
+                    req.response().end(body);
+                  }
+                });
+              }
+            });
+          }
+        });
+
+
+        routeMatcher.get("/zips[id]", new Handler<HttpServerRequest>() {
+          @Override
+          public void handle(HttpServerRequest request) {
+
+          }
+        });
+
       }
-    });
+    }).listen(8080);
+
+    // output that the server is started
+    container.logger().info("Webserver started, listening on port: 8080");
+  }
 
 
-    logger.info("PingVerticle started");
 
+
+  private class ReplyHandler implements Handler<Message<JsonObject>> {
+
+    private final HttpServerRequest request;
+    private JsonObject data;
+
+    private ReplyHandler(final HttpServerRequest request, JsonObject data) {
+      this.request = request;
+      this.data = data;
+    }
+
+    @Override
+    public void handle(Message<JsonObject> event) {
+      // if the response contains more message, we need to get the rest
+      if (event.body().getString("status").equals("more-exist")) {
+        JsonArray results = event.body().getArray("results");
+
+        for (Object el : results) {
+          data.getArray("results").add(el);
+        }
+
+        event.reply(new JsonObject(), new ReplyHandler(request, data));
+      } else {
+
+        JsonArray results = event.body().getArray("results");
+        for (Object el : results) {
+          data.getArray("results").add(el);
+        }
+
+        request.response().putHeader("Content-Type", "application/json");
+        request.response().end(data.encodePrettily());
+      }
+    }
   }
 }
+

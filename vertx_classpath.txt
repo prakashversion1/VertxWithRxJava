@@ -1,0 +1,5 @@
+src/main/resources
+bin
+out/production/VertxVertxWithRxJava
+out/test/VertxVertxWithRxJava
+build/deps
