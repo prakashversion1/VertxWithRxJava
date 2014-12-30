@@ -57,7 +57,7 @@ repositories {
 }
 
 dependencies {
-  compile "io.vertx:mod-mongo-persistor:2.0.0-beta2"
+//  runtime "io.vertx~mod-mongo-persistor~2.1.0"
   provided "io.vertx:vertx-core:$vertxVersion"
   provided "io.vertx:vertx-platform:$vertxVersion"
   testCompile "junit:junit:$junitVersion"

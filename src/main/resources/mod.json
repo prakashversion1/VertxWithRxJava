@@ -36,6 +36,7 @@
   "keywords": ["gerbils", "cars", "cheese", "chocolate", "underpants", "herring"],
   "homepage": "url to your project page",
 
-  "auto-redeploy": true
+  "auto-redeploy": true,
+  "includes":" io.vertx~mod-mongo-persistor~2.1.0"
 
 }
