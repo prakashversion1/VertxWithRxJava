@@ -18,6 +18,7 @@
 package com.mycompany.myproject;
 
 
+import io.vertx.rxcore.RxSupport;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.buffer.Buffer;
@@ -28,6 +29,7 @@ import org.vertx.java.core.http.RouteMatcher;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.platform.Verticle;
+import rx.Observable;
 
 public class PingVerticle extends Verticle {
 
@@ -138,6 +140,13 @@ public class PingVerticle extends Verticle {
             }
         });
 
+        matcher.post("/rxzips/:id", new Handler<HttpServerRequest>() {
+
+            public void handle(final HttpServerRequest request) {
+                Observable<Buffer> requestObservable = RxSupport.toObservable(request);
+
+            }
+        });
 
         // create and run the server
         HttpServer server = vertx.createHttpServer().requestHandler(matcher).listen(8080);
