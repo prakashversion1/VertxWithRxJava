@@ -19,6 +19,8 @@ package com.mycompany.myproject;
 
 
 import io.vertx.rxcore.RxSupport;
+import io.vertx.rxcore.java.eventbus.RxEventBus;
+import io.vertx.rxcore.java.eventbus.RxMessage;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.MultiMap;
 import org.vertx.java.core.buffer.Buffer;
@@ -30,6 +32,8 @@ import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.platform.Verticle;
 import rx.Observable;
+import rx.functions.Action1;
+import rx.functions.Func1;
 
 public class PingVerticle extends Verticle {
 
@@ -37,6 +41,8 @@ public class PingVerticle extends Verticle {
 
         // load the general config object, loaded by using -config on command line
         JsonObject appConfig = container.config();
+
+        final RxEventBus rxEventBus = new RxEventBus(vertx.eventBus());
 
         // deploy the mongo-persistor module, which we'll use for persistence
         container.deployModule("io.vertx~mod-mongo-persistor~2.1.0", appConfig.getObject("mongo-persistor"));
@@ -144,8 +150,50 @@ public class PingVerticle extends Verticle {
 
             public void handle(final HttpServerRequest request) {
                 Observable<Buffer> requestObservable = RxSupport.toObservable(request);
+                Observable<RxMessage<JsonObject>> updateObservable = requestObservable.flatMap(new Func1<Buffer, Observable<? extends RxMessage<JsonObject>>>() {
+                    @Override
+                    public Observable<RxMessage<JsonObject>> call(Buffer buffer) {
+                        System.out.println("buffer = " + buffer);
+                        // create the message
+                        JsonObject newObject = new JsonObject(buffer.getString(0, buffer.length()));
+                        JsonObject matcher = new JsonObject().putString("_id", request.params().get("id"));
+                        JsonObject json = new JsonObject().putString("collection", "zips")
+                                .putString("action", "update")
+                                .putObject("criteria", matcher)
+                                .putBoolean("upsert", false)
+                                .putBoolean("multi", false)
+                                .putObject("objNew", newObject);
+
+                        // and return an observable
+                        return rxEventBus.send("mongodb-persistor", json);
+                    }
+                });
+
+                Observable<RxMessage<JsonObject>> getLatestObservable = updateObservable.flatMap(new Func1<RxMessage<JsonObject>, Observable<RxMessage<JsonObject>>>() {
+                    @Override
+                    public Observable<RxMessage<JsonObject>> call(RxMessage<JsonObject> jsonObjectRxMessage) {
+                        System.out.println("jsonObjectRxMessage = " + jsonObjectRxMessage);
+                        // next we get the latest version from the database, after the update has succeeded
+                        // this isn't dependent on the previous one. It just has to wait till the previous
+                        // one has updated the database, but we could check whether the previous one was successfully
+                        JsonObject matcher = new JsonObject().putString("_id", request.params().get("id"));
+                        JsonObject json2 = new JsonObject().putString("collection", "zips")
+                                .putString("action", "find")
+                                .putObject("matcher", matcher);
+                        return rxEventBus.send("mongodb-persistor", json2);
+                    }
+                });
+
+                getLatestObservable.subscribe(new Action1<RxMessage<JsonObject>>() {
+                    @Override
+                    public void call(RxMessage<JsonObject> jsonObjectRxMessage) {
+                        request.response().end(jsonObjectRxMessage.body().encodePrettily());
+                    }
+                });
 
             }
+
+
         });
 
         // create and run the server
